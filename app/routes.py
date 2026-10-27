@@ -40,6 +40,58 @@ def get_customers():
         if connection is not None and connection.is_connected():
             connection.close()
 
+@api.post("/customers")
+def create_customer():
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"error": "Send a valid JSON object."}), 400
+
+    display_name = data.get("display_name")
+
+    if not isinstance(display_name, str) or not display_name.strip():
+        return jsonify({"error": "Customer name is required."}), 400
+
+    display_name = display_name.strip()
+
+    if len(display_name) > 100:
+        return jsonify({"error": "Customer name must be 100 characters or fewer."}), 400
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        cursor.execute(
+            "INSERT INTO customers (display_name) VALUES (%s)",
+            (display_name,)
+        )
+
+        customer_id = cursor.lastrowid
+        connection.commit()
+
+        return jsonify({
+            "message": "Customer added successfully.",
+            "customer_id": customer_id,
+            "display_name": display_name
+        }), 201
+
+    except Exception as error:
+        if connection is not None:
+            connection.rollback()
+
+        print("Customer creation error:", error)
+        return jsonify({"error": "Unable to add customer."}), 500
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if connection is not None and connection.is_connected():
+            connection.close()
+
 
 @api.get("/accounts")
 def get_accounts():
@@ -300,6 +352,14 @@ def create_transaction():
 
         else:
             new_balance = current_balance + amount
+        # Prevent the account balance from exceeding DECIMAL(15,2).
+        max_balance = Decimal("9999999999999.99")
+
+        if new_balance > max_balance:
+            connection.rollback()
+            return jsonify({
+                "error": "Transaction exceeds the maximum supported account balance."
+            }), 400
 
         # Record the transaction.
         cursor.execute("""
